@@ -9,6 +9,15 @@
 // Отрендеренный openclaw.config.json5 в git не попадает (.gitignore).
 
 {
+  gateway: {
+    // Обязательно. Конфиг без mode шлюз считает повреждённым и отказывается
+    // стартовать: "Missing config. Run `openclaw setup` or set gateway.mode=local".
+    // Значение local — самостоятельный одиночный шлюз, наш случай.
+    // Флаг --allow-unconfigured не подходит: он ничего не сохраняет,
+    // и после каждого перезапуска ошибка возвращается.
+    mode: "local",
+  },
+
   models: {
     providers: {
       // Google AI Studio через OpenAI-совместимый эндпоинт.

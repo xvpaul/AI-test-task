@@ -129,30 +129,26 @@ jobs:
             openclaw.config.json5 SOUL.md \
             "${VPS_USER}@${VPS_HOST}:${OPENCLAW_DIR}/"
 
-      - name: Перезапустить Gateway
+      # Владельца правим ПОСЛЕ scp: файлы прилетают от root, а внутри
+      # контейнера процесс работает под node и не может в них писать.
+      - name: Права и перезапуск Gateway
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
-          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '~/openclaw' }}
+          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '' }}
+          OPENCLAW_DIR: ${{ vars.OPENCLAW_DIR || '' }}
+          OPENCLAW_IMAGE: ${{ vars.OPENCLAW_IMAGE || 'ghcr.io/openclaw/openclaw:latest' }}
         run: |
           set -euo pipefail
-          # up -d, а не restart: restart не перечитывает переменные окружения
-          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
-            "cd ${COMPOSE_DIR} && docker compose up -d openclaw-gateway"
+          scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
+            scripts/deploy-remote.sh \
+            "${VPS_USER}@${VPS_HOST}:/tmp/openclaw-deploy.sh"
 
-      - name: Проверить, что контейнер поднялся
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
-          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '~/openclaw' }}
-        run: |
-          set -euo pipefail
-          sleep 10
-          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
-            "cd ${COMPOSE_DIR} && docker compose ps openclaw-gateway && \
-             docker compose logs --tail=30 openclaw-gateway"
+          ssh -n -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "COMPOSE_DIR='${COMPOSE_DIR}' OPENCLAW_DIR='${OPENCLAW_DIR}' \
+             OPENCLAW_IMAGE='${OPENCLAW_IMAGE}' \
+             bash /tmp/openclaw-deploy.sh; rc=\$?; rm -f /tmp/openclaw-deploy.sh; exit \$rc"
 
       - name: Удалить ключ и отрендеренный конфиг
         if: always() # выполняется даже если деплой упал

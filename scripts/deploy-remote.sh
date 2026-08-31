@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# Выполняется НА СЕРВЕРЕ после доставки конфига. Заливается через scp из deploy.yml.
+#
+# Задача: привести владельца каталога конфига к пользователю внутри контейнера
+# и перезапустить сервис.
+#
+# Зачем chown: CI подключается под root, поэтому mkdir и scp создают файлы
+# с владельцем root:root. Внутри образа процесс работает под пользователем node
+# (обычно uid 1000) и не может писать в свой state-каталог — контейнер падает
+# с EACCES на openclaw.sqlite-wal и уходит в цикл перезапусков.
+#
+# Переменные окружения (необязательные):
+#   COMPOSE_DIR, OPENCLAW_DIR, OPENCLAW_IMAGE
+
+set -euo pipefail
+trap 'echo "ОШИБКА: строка ${LINENO}, код выхода $?" >&2' ERR
+
+COMPOSE_DIR="${COMPOSE_DIR:-$HOME/openclaw}"
+OPENCLAW_DIR="${OPENCLAW_DIR:-$HOME/.openclaw}"
+OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}"
+COMPOSE_DIR="${COMPOSE_DIR/#\~/$HOME}"
+OPENCLAW_DIR="${OPENCLAW_DIR/#\~/$HOME}"
+
+SERVICE="openclaw-gateway"
+cd "${COMPOSE_DIR}"
+
+# --- Владелец каталога конфига ---------------------------------------------
+# UID/GID спрашиваем у самого образа, а не хардкодим 1000: если сборка
+# сменит пользователя, хардкод сломается молча.
+echo "== Права на ${OPENCLAW_DIR} =="
+if IDS="$(docker run --rm --entrypoint sh "${OPENCLAW_IMAGE}" -c 'id -u; id -g' 2>/dev/null | paste -sd: -)" \
+   && [ "${IDS}" != ":" ] && [ -n "${IDS}" ]; then
+  echo "пользователь внутри образа: ${IDS}"
+else
+  IDS="1000:1000"
+  echo "не удалось спросить образ, беру значение по умолчанию: ${IDS}"
+fi
+
+CURRENT="$(stat -c '%u:%g' "${OPENCLAW_DIR}")"
+if [ "${CURRENT}" = "${IDS}" ]; then
+  echo "владелец уже корректный, ничего не меняю"
+else
+  echo "меняю владельца: ${CURRENT} -> ${IDS}"
+  chown -R "${IDS}" "${OPENCLAW_DIR}"
+fi
+
+# --- Перезапуск -------------------------------------------------------------
+# up -d, а не restart: restart не перечитывает переменные окружения
+echo "== Перезапуск ${SERVICE} =="
+docker compose up -d "${SERVICE}"
+
+# --- Ожидание готовности ----------------------------------------------------
+# Ждём по факту, а не фиксированным sleep: healthcheck может занять
+# от пары секунд до полуминуты в зависимости от нагрузки VPS.
+echo "== Ожидание готовности (до 90 с) =="
+deadline=$(( $(date +%s) + 90 ))
+status=""
+while [ "$(date +%s)" -lt "${deadline}" ]; do
+  cid="$(docker compose ps -q "${SERVICE}")"
+  [ -n "${cid}" ] || { sleep 3; continue; }
+
+  # У образа может не быть healthcheck — тогда ориентируемся на running
+  health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}" 2>/dev/null || echo unknown)"
+  running="$(docker inspect -f '{{.State.Running}}' "${cid}" 2>/dev/null || echo false)"
+  restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || echo 0)"
+
+  if [ "${health}" = "healthy" ] || { [ "${health}" = "none" ] && [ "${running}" = "true" ]; }; then
+    status="ok"; break
+  fi
+  if [ "${restarts}" -gt 3 ]; then
+    status="crashloop"; break
+  fi
+  sleep 3
+done
+
+echo
+docker compose ps "${SERVICE}"
+echo
+echo "== Последние логи =="
+docker compose logs --tail=40 "${SERVICE}"
+
+case "${status}" in
+  ok)
+    echo
+    echo "== Сервис поднялся =="
+    ;;
+  crashloop)
+    echo
+    echo "НЕТ: контейнер перезапускается циклически — смотрите логи выше" >&2
+    exit 1
+    ;;
+  *)
+    echo
+    echo "НЕТ: сервис не пришёл в рабочее состояние за 90 секунд" >&2
+    exit 1
+    ;;
+esac
