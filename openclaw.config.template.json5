@@ -26,16 +26,19 @@
         baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
         apiKey: "${GEMINI_API_KEY}",
 
+        // Схема требует `name` (строка) и не принимает `alias` —
+        // проверено сообщением валидатора шлюза, пример в документации
+        // с `alias` оказался неточным.
         models: [
           {
             id: "gemini-3.7-flash",
-            alias: "flash",
+            name: "gemini-3.7-flash",
             contextTokens: 1000000,
           },
           {
             // Запасная модель на случай исчерпания суточной квоты.
             id: "gemini-3.5-flash-lite",
-            alias: "lite",
+            name: "gemini-3.5-flash-lite",
             contextTokens: 1000000,
           },
         ],
