@@ -76,6 +76,70 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      # Идемпотентно: на первом запуске ставит OpenClaw, дальше просто проверяет.
+      - name: Bootstrap — установить OpenClaw, если его нет
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '' }}
+          OPENCLAW_DIR: ${{ vars.OPENCLAW_DIR || '' }}
+          OPENCLAW_IMAGE: ${{ vars.OPENCLAW_IMAGE || 'ghcr.io/openclaw/openclaw:latest' }}
+          GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "COMPOSE_DIR='${COMPOSE_DIR}' OPENCLAW_DIR='${OPENCLAW_DIR}' \
+             OPENCLAW_IMAGE='${OPENCLAW_IMAGE}' GATEWAY_TOKEN='${GATEWAY_TOKEN}' \
+             bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          # Значения по умолчанию считаем на сервере: тильда в кавычках
+          # не раскрывается и создала бы каталог с именем "~".
+          COMPOSE_DIR="${COMPOSE_DIR:-$HOME/openclaw}"
+          OPENCLAW_DIR="${OPENCLAW_DIR:-$HOME/.openclaw}"
+          COMPOSE_DIR="${COMPOSE_DIR/#\~/$HOME}"
+          OPENCLAW_DIR="${OPENCLAW_DIR/#\~/$HOME}"
+
+          command -v docker >/dev/null || { echo "docker не установлен"; exit 1; }
+          command -v git    >/dev/null || { echo "git не установлен";    exit 1; }
+
+          # 1. Репозиторий (в нём лежит docker-compose.yml)
+          if [ -d "${COMPOSE_DIR}/.git" ]; then
+            echo "Репозиторий уже есть: ${COMPOSE_DIR}"
+          else
+            echo "Клонирую OpenClaw в ${COMPOSE_DIR}"
+            git clone --depth 1 https://github.com/openclaw/openclaw.git "${COMPOSE_DIR}"
+          fi
+
+          mkdir -p "${OPENCLAW_DIR}"
+          cd "${COMPOSE_DIR}"
+
+          # 2. Gateway-токен: генерируем один раз и больше не трогаем,
+          #    иначе каждый деплой инвалидировал бы вход в дашборд.
+          if [ -f .env ] && grep -q '^OPENCLAW_GATEWAY_TOKEN=.\+' .env; then
+            TOKEN="$(grep '^OPENCLAW_GATEWAY_TOKEN=' .env | cut -d= -f2-)"
+            echo "Gateway-токен уже задан, оставляю как есть"
+          elif [ -n "${GATEWAY_TOKEN}" ]; then
+            TOKEN="${GATEWAY_TOKEN}"
+            echo "Gateway-токен взят из секрета"
+          else
+            TOKEN="$(openssl rand -hex 32)"
+            echo "Gateway-токен сгенерирован (посмотреть: cat ${COMPOSE_DIR}/.env)"
+          fi
+
+          # 3. .env для compose
+          umask 077
+          cat > .env <<EOF
+          OPENCLAW_IMAGE=${OPENCLAW_IMAGE}
+          OPENCLAW_GATEWAY_TOKEN=${TOKEN}
+          OPENCLAW_SKIP_ONBOARDING=1
+          EOF
+          chmod 600 .env
+
+          echo "Bootstrap готов: compose=${COMPOSE_DIR}, config=${OPENCLAW_DIR}"
+          REMOTE
+
       - name: Залить конфиг на VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
