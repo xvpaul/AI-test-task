@@ -1,0 +1,61 @@
+// OpenClaw Gateway — ШАБЛОН конфигурации.
+// Плейсхолдеры подставляются в CI из GitHub Secrets (см. CICD.md).
+// Этот файл безопасен для коммита — секретов в нём нет.
+//
+// ВАЖНО: не пишите в комментариях литеральный плейсхолдер-синтаксис —
+// шаг проверки в deploy.yml ищет неподставленные плейсхолдеры по всему файлу
+// и упадёт на совпадении внутри комментария.
+//
+// Отрендеренный openclaw.config.json5 в git не попадает (.gitignore).
+
+{
+  models: {
+    providers: {
+      // Google AI Studio через OpenAI-совместимый эндпоинт.
+      // Namespace "aistudio" — чтобы не столкнуться со встроенными провайдерами.
+      aistudio: {
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        apiKey: "${GEMINI_API_KEY}",
+
+        models: [
+          {
+            id: "gemini-3.7-flash",
+            alias: "flash",
+            contextTokens: 1000000,
+          },
+          {
+            // Запасная модель на случай исчерпания суточной квоты.
+            id: "gemini-3.5-flash-lite",
+            alias: "lite",
+            contextTokens: 1000000,
+          },
+        ],
+      },
+    },
+  },
+
+  agents: {
+    defaults: {
+      model: {
+        primary: "aistudio/gemini-3.7-flash",
+        fallbacks: ["aistudio/gemini-3.5-flash-lite"],
+      },
+    },
+  },
+
+  channels: {
+    telegram: {
+      enabled: true,
+      botToken: "${TELEGRAM_BOT_TOKEN}",
+
+      // allowlist — только владелец.
+      // Для проверки HR поменять на "pairing" (см. DEPLOY.md, шаг 8).
+      dmPolicy: "${TELEGRAM_DM_POLICY}",
+      allowFrom: ["${TELEGRAM_OWNER_ID}"],
+
+      groups: {
+        "*": { requireMention: true },
+      },
+    },
+  },
+}

@@ -1,0 +1,121 @@
+name: Deploy OpenClaw config
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "openclaw.config.template.json5"
+      - "SOUL.md"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # позволяет запустить деплой вручную из вкладки Actions
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false # не обрывать деплой на середине
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверить, что все секреты заданы
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for v in GEMINI_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_OWNER_ID \
+                   VPS_HOST VPS_USER VPS_SSH_KEY VPS_KNOWN_HOSTS; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::секрет $v не задан"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Отрендерить конфиг из шаблона
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+          # Не секрет — переключается через переменную репозитория.
+          # allowlist (по умолчанию) → только владелец; pairing → на время проверки HR.
+          TELEGRAM_DM_POLICY: ${{ vars.TELEGRAM_DM_POLICY || 'allowlist' }}
+        run: |
+          set -euo pipefail
+          envsubst '${GEMINI_API_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_OWNER_ID} ${TELEGRAM_DM_POLICY}' \
+            < openclaw.config.template.json5 > openclaw.config.json5
+
+          # Убедиться, что не осталось неподставленных плейсхолдеров
+          if grep -q '\${' openclaw.config.json5; then
+            echo "::error::в конфиге остались неподставленные плейсхолдеры"
+            grep -n '\${' openclaw.config.json5
+            exit 1
+          fi
+          echo "Конфиг отрендерен, $(wc -l < openclaw.config.json5) строк"
+
+      - name: Настроить SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # known_hosts из секрета, а не ssh-keyscan на лету:
+          # keyscan доверяет первому встречному ключу и не защищает от MITM.
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Залить конфиг на VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          # Необязательный секрет: если не задан — стандартный 22.
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          # Каталог, смонтированный в контейнер как /home/node/.openclaw
+          OPENCLAW_DIR: ${{ vars.OPENCLAW_DIR || '~/.openclaw' }}
+        run: |
+          set -euo pipefail
+          # ВНИМАНИЕ: у scp порт задаётся заглавной -P, у ssh — строчной -p
+          scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
+            openclaw.config.json5 SOUL.md \
+            "${VPS_USER}@${VPS_HOST}:${OPENCLAW_DIR}/"
+
+      - name: Перезапустить Gateway
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '~/openclaw' }}
+        run: |
+          set -euo pipefail
+          # up -d, а не restart: restart не перечитывает переменные окружения
+          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "cd ${COMPOSE_DIR} && docker compose up -d openclaw-gateway"
+
+      - name: Проверить, что контейнер поднялся
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.COMPOSE_DIR || '~/openclaw' }}
+        run: |
+          set -euo pipefail
+          sleep 10
+          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            "cd ${COMPOSE_DIR} && docker compose ps openclaw-gateway && \
+             docker compose logs --tail=30 openclaw-gateway"
+
+      - name: Удалить ключ и отрендеренный конфиг
+        if: always() # выполняется даже если деплой упал
+        run: rm -f ~/.ssh/deploy_key openclaw.config.json5

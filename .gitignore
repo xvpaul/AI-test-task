@@ -1,0 +1,10 @@
+# Отрендеренный конфиг содержит API-ключ и токен бота.
+# В репозиторий коммитится только openclaw.config.template.json5.
+openclaw.config.json5
+
+# Локальные секреты и ключи
+.env
+*.key
+*.pem
+id_*
+!*.pub
