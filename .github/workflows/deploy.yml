@@ -20,6 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Страховка от случайного коммита реального ключа вместо плейсхолдера.
+      # Дешевле поймать здесь, чем отзывать засветившийся ключ.
+      - name: Проверить, что в репозитории нет секретов
+        run: |
+          set -euo pipefail
+          pattern='AIza[0-9A-Za-z_-]{35}|AQ\.[A-Za-z0-9_-]{25,}|[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}|BEGIN [A-Z ]*PRIVATE KEY'
+          # -I пропускает бинарные файлы, .git исключаем явно
+          if grep -rInE "$pattern" . --exclude-dir=.git >/dev/null 2>&1; then
+            echo "::error::в репозитории найдено похожее на реальный секрет"
+            # Печатаем только файл и номер строки, не содержимое
+            grep -rInE "$pattern" . --exclude-dir=.git | cut -d: -f1,2
+            exit 1
+          fi
+          echo "Секретов в репозитории не найдено"
+
       - name: Проверить, что все секреты заданы
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
