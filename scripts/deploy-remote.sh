@@ -80,8 +80,6 @@ rm -f "${OPENCLAW_DIR}/openclaw.config.json5"
 #   3. сбрасывается restart-loop breaker шлюза, который после серии неудачных
 #      стартов глушит автозапуск каналов (Telegram молчал бы и с валидным конфигом).
 echo "== Пересоздание ${SERVICE} =="
-# Отсечка для чтения логов: всё, что раньше, — от прошлого запуска
-SINCE="$(date -u +%Y-%m-%dT%H:%M:%S)"
 docker compose up -d --force-recreate "${SERVICE}"
 
 # --- Ожидание готовности ----------------------------------------------------
@@ -101,8 +99,12 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
   # RestartCount осмысленен: контейнер только что пересоздан, счётчик с нуля
   restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || echo 0)"
 
+  # Логи берём по ID нового контейнера, без --since: контейнер только что
+  # пересоздан, поэтому его лог и так содержит только текущий запуск.
+  # Отсечка по времени была источником ошибки — Docker трактует строку
+  # без суффикса Z как локальное время, и при не-UTC хосте окно уезжает.
   if [ "${running}" = "true" ] \
-     && docker compose logs --since "${SINCE}" "${SERVICE}" 2>&1 | grep -q '\[gateway\] ready'; then
+     && docker logs "${cid}" 2>&1 | grep -q '\[gateway\] ready'; then
     status="ok"; break
   fi
   if [ "${restarts}" -gt 3 ]; then
@@ -137,7 +139,9 @@ case "${status}" in
     ;;
   *)
     echo
-    echo "НЕТ: сервис не пришёл в рабочее состояние за 90 секунд" >&2
+    echo "НЕТ: за 120 с не появилась строка '[gateway] ready' в логах контейнера." >&2
+    echo "     Если выше видно 'ready' и Telegram стартовал — сервис жив," >&2
+    echo "     и проблема в этой проверке, а не в шлюзе." >&2
     exit 1
     ;;
 esac
