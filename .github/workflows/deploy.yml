@@ -76,6 +76,19 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+          # Keepalive: без него долгие операции (git clone, docker pull)
+          # рвутся по таймауту NAT/файрвола и выглядят как "Broken pipe".
+          # BatchMode запрещает любые интерактивные запросы — падаем сразу,
+          # а не зависаем до таймаута job.
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            BatchMode yes
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+            ConnectTimeout 15
+          EOF
+          chmod 600 ~/.ssh/config
+
       # Идемпотентно: на первом запуске ставит OpenClaw, дальше просто проверяет.
       - name: Bootstrap — установить OpenClaw, если его нет
         env:
@@ -88,57 +101,18 @@ jobs:
           GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN || '' }}
         run: |
           set -euo pipefail
-          ssh -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+          # Скрипт передаётся файлом, а не по stdin: при `bash -s` упавший
+          # удалённый скрипт закрывает канал, и ssh рапортует "Broken pipe"
+          # вместо настоящей ошибки. Плюс git конфликтует за тот же stdin.
+          scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
+            scripts/bootstrap-remote.sh \
+            "${VPS_USER}@${VPS_HOST}:/tmp/openclaw-bootstrap.sh"
+
+          # -n закрывает stdin: ни одна команда внутри не сможет на нём зависнуть
+          ssh -n -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
             "COMPOSE_DIR='${COMPOSE_DIR}' OPENCLAW_DIR='${OPENCLAW_DIR}' \
              OPENCLAW_IMAGE='${OPENCLAW_IMAGE}' GATEWAY_TOKEN='${GATEWAY_TOKEN}' \
-             bash -s" <<'REMOTE'
-          set -euo pipefail
-
-          # Значения по умолчанию считаем на сервере: тильда в кавычках
-          # не раскрывается и создала бы каталог с именем "~".
-          COMPOSE_DIR="${COMPOSE_DIR:-$HOME/openclaw}"
-          OPENCLAW_DIR="${OPENCLAW_DIR:-$HOME/.openclaw}"
-          COMPOSE_DIR="${COMPOSE_DIR/#\~/$HOME}"
-          OPENCLAW_DIR="${OPENCLAW_DIR/#\~/$HOME}"
-
-          command -v docker >/dev/null || { echo "docker не установлен"; exit 1; }
-          command -v git    >/dev/null || { echo "git не установлен";    exit 1; }
-
-          # 1. Репозиторий (в нём лежит docker-compose.yml)
-          if [ -d "${COMPOSE_DIR}/.git" ]; then
-            echo "Репозиторий уже есть: ${COMPOSE_DIR}"
-          else
-            echo "Клонирую OpenClaw в ${COMPOSE_DIR}"
-            git clone --depth 1 https://github.com/openclaw/openclaw.git "${COMPOSE_DIR}"
-          fi
-
-          mkdir -p "${OPENCLAW_DIR}"
-          cd "${COMPOSE_DIR}"
-
-          # 2. Gateway-токен: генерируем один раз и больше не трогаем,
-          #    иначе каждый деплой инвалидировал бы вход в дашборд.
-          if [ -f .env ] && grep -q '^OPENCLAW_GATEWAY_TOKEN=.\+' .env; then
-            TOKEN="$(grep '^OPENCLAW_GATEWAY_TOKEN=' .env | cut -d= -f2-)"
-            echo "Gateway-токен уже задан, оставляю как есть"
-          elif [ -n "${GATEWAY_TOKEN}" ]; then
-            TOKEN="${GATEWAY_TOKEN}"
-            echo "Gateway-токен взят из секрета"
-          else
-            TOKEN="$(openssl rand -hex 32)"
-            echo "Gateway-токен сгенерирован (посмотреть: cat ${COMPOSE_DIR}/.env)"
-          fi
-
-          # 3. .env для compose
-          umask 077
-          cat > .env <<EOF
-          OPENCLAW_IMAGE=${OPENCLAW_IMAGE}
-          OPENCLAW_GATEWAY_TOKEN=${TOKEN}
-          OPENCLAW_SKIP_ONBOARDING=1
-          EOF
-          chmod 600 .env
-
-          echo "Bootstrap готов: compose=${COMPOSE_DIR}, config=${OPENCLAW_DIR}"
-          REMOTE
+             bash /tmp/openclaw-bootstrap.sh; rc=\$?; rm -f /tmp/openclaw-bootstrap.sh; exit \$rc"
 
       - name: Залить конфиг на VPS
         env:
