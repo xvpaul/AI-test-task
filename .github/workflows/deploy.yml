@@ -51,16 +51,21 @@ jobs:
           TELEGRAM_DM_POLICY: ${{ vars.TELEGRAM_DM_POLICY || 'allowlist' }}
         run: |
           set -euo pipefail
+          # Имя файла обязано быть openclaw.json — шлюз читает
+          # ~/.openclaw/openclaw.json и ничего другого. Содержимое при этом
+          # в формате JSON5 (комментарии и висячие запятые допустимы).
+          # Файл с любым другим именем молча игнорируется, а шлюз стартует
+          # на дефолтах — без gateway.mode, провайдера и Telegram.
           envsubst '${GEMINI_API_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_OWNER_ID} ${TELEGRAM_DM_POLICY}' \
-            < openclaw.config.template.json5 > openclaw.config.json5
+            < openclaw.config.template.json5 > openclaw.json
 
           # Убедиться, что не осталось неподставленных плейсхолдеров
-          if grep -q '\${' openclaw.config.json5; then
+          if grep -q '\${' openclaw.json; then
             echo "::error::в конфиге остались неподставленные плейсхолдеры"
-            grep -n '\${' openclaw.config.json5
+            grep -n '\${' openclaw.json
             exit 1
           fi
-          echo "Конфиг отрендерен, $(wc -l < openclaw.config.json5) строк"
+          echo "Конфиг отрендерен, $(wc -l < openclaw.json) строк"
 
       - name: Настроить SSH
         env:
@@ -126,7 +131,7 @@ jobs:
           set -euo pipefail
           # ВНИМАНИЕ: у scp порт задаётся заглавной -P, у ssh — строчной -p
           scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
-            openclaw.config.json5 SOUL.md \
+            openclaw.json SOUL.md \
             "${VPS_USER}@${VPS_HOST}:${OPENCLAW_DIR}/"
 
       # Владельца правим ПОСЛЕ scp: файлы прилетают от root, а внутри
@@ -152,4 +157,4 @@ jobs:
 
       - name: Удалить ключ и отрендеренный конфиг
         if: always() # выполняется даже если деплой упал
-        run: rm -f ~/.ssh/deploy_key openclaw.config.json5
+        run: rm -f ~/.ssh/deploy_key openclaw.json
