@@ -50,8 +50,14 @@
   agents: {
     defaults: {
       model: {
-        primary: "aistudio/gemini-3.7-flash",
-        fallbacks: ["aistudio/gemini-3.5-flash-lite"],
+        // Основная — flash-lite: на бесплатном тире именно она стабильно
+        // отвечает 200. У gemini-3.7-flash наблюдались постоянные 503
+        // ("experiencing high demand"), из-за чего каждое сообщение
+        // ждало три неудачные попытки (4–25 с) перед переключением.
+        primary: "aistudio/gemini-3.5-flash-lite",
+        // Более сильная модель остаётся запасной: если её разгрузят,
+        // ответы станут качественнее без правки конфига.
+        fallbacks: ["aistudio/gemini-3.7-flash"],
       },
     },
   },
