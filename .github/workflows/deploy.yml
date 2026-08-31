@@ -130,9 +130,15 @@ jobs:
         run: |
           set -euo pipefail
           # ВНИМАНИЕ: у scp порт задаётся заглавной -P, у ssh — строчной -p
+          # Конфиг — в корень, SOUL.md — в workspace.
+          # Персона читается только из workspace; в корне файл игнорируется.
           scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
-            openclaw.json SOUL.md \
+            openclaw.json \
             "${VPS_USER}@${VPS_HOST}:${OPENCLAW_DIR}/"
+
+          scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
+            SOUL.md \
+            "${VPS_USER}@${VPS_HOST}:${OPENCLAW_DIR}/workspace/"
 
       # Владельца правим ПОСЛЕ scp: файлы прилетают от root, а внутри
       # контейнера процесс работает под node и не может в них писать.

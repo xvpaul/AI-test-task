@@ -66,7 +66,8 @@ fi
 }
 echo "compose-файл найден"
 
-mkdir -p "${OPENCLAW_DIR}"
+# workspace обязателен: туда кладётся SOUL.md, оттуда читается персона
+mkdir -p "${OPENCLAW_DIR}/workspace"
 cd "${COMPOSE_DIR}"
 
 # --- Gateway-токен ----------------------------------------------------------

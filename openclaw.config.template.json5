@@ -49,6 +49,12 @@
 
   agents: {
     defaults: {
+      // Каталог bootstrap-файлов персоны. SOUL.md кладётся именно сюда, а не
+      // в корень ~/.openclaw — там он просто лежит и не читается.
+      // Системный промпт собирается из SOUL.md, затем IDENTITY.md, USER.md,
+      // AGENTS.md, MEMORY.md. Путь — внутри контейнера, не на хосте.
+      workspace: "/home/node/.openclaw/workspace",
+
       model: {
         // Основная — flash-lite: на бесплатном тире именно она стабильно
         // отвечает 200. У gemini-3.7-flash наблюдались постоянные 503

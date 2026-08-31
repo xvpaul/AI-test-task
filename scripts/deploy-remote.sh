@@ -80,24 +80,29 @@ rm -f "${OPENCLAW_DIR}/openclaw.config.json5"
 #   3. сбрасывается restart-loop breaker шлюза, который после серии неудачных
 #      стартов глушит автозапуск каналов (Telegram молчал бы и с валидным конфигом).
 echo "== Пересоздание ${SERVICE} =="
+# Отсечка для чтения логов: всё, что раньше, — от прошлого запуска
+SINCE="$(date -u +%Y-%m-%dT%H:%M:%S)"
 docker compose up -d --force-recreate "${SERVICE}"
 
 # --- Ожидание готовности ----------------------------------------------------
 # Ждём по факту, а не фиксированным sleep: healthcheck может занять
 # от пары секунд до полуминуты в зависимости от нагрузки VPS.
-echo "== Ожидание готовности (до 90 с) =="
-deadline=$(( $(date +%s) + 90 ))
+# Ждём строку готовности В ЛОГАХ, а не healthcheck Docker.
+# Healthcheck этого образа надолго залипает в "starting" даже когда шлюз
+# уже принимает сообщения, — по нему деплой ложно падал по таймауту.
+echo "== Ожидание готовности (до 120 с) =="
+deadline=$(( $(date +%s) + 120 ))
 status=""
 while [ "$(date +%s)" -lt "${deadline}" ]; do
   cid="$(docker compose ps -q "${SERVICE}")"
   [ -n "${cid}" ] || { sleep 3; continue; }
 
-  # У образа может не быть healthcheck — тогда ориентируемся на running
-  health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${cid}" 2>/dev/null || echo unknown)"
   running="$(docker inspect -f '{{.State.Running}}' "${cid}" 2>/dev/null || echo false)"
+  # RestartCount осмысленен: контейнер только что пересоздан, счётчик с нуля
   restarts="$(docker inspect -f '{{.RestartCount}}' "${cid}" 2>/dev/null || echo 0)"
 
-  if [ "${health}" = "healthy" ] || { [ "${health}" = "none" ] && [ "${running}" = "true" ]; }; then
+  if [ "${running}" = "true" ] \
+     && docker compose logs --since "${SINCE}" "${SERVICE}" 2>&1 | grep -q '\[gateway\] ready'; then
     status="ok"; break
   fi
   if [ "${restarts}" -gt 3 ]; then
@@ -105,6 +110,14 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
   fi
   sleep 3
 done
+
+# Подтверждение, что персона на месте: молчаливое отсутствие файла
+# означает бота с дефолтным характером вместо заданного
+if [ -f "${OPENCLAW_DIR}/workspace/SOUL.md" ]; then
+  echo "SOUL.md в workspace: да ($(wc -c < "${OPENCLAW_DIR}/workspace/SOUL.md") байт)"
+else
+  echo "ВНИМАНИЕ: ${OPENCLAW_DIR}/workspace/SOUL.md отсутствует — персона не применится" >&2
+fi
 
 echo
 docker compose ps "${SERVICE}"
