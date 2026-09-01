@@ -62,6 +62,17 @@ chown -R "${IDS}" "${OPENCLAW_DIR}"
 # и fs.state_dir.perms_readable.
 chmod 700 "${OPENCLAW_DIR}"
 
+# Каталог учётных данных — отдельный том, лежит рядом с ${OPENCLAW_DIR}
+# и монтируется в /home/node/.config/openclaw. Наш пайплайн его не создаёт
+# и не заполняет, поэтому он выпадал из-под chown/chmod выше и мог остаться
+# доступным на чтение другим пользователям машины.
+AUTH_DIR="${OPENCLAW_DIR}-auth-profile-secrets"
+if [ -d "${AUTH_DIR}" ]; then
+  chown -R "${IDS}" "${AUTH_DIR}"
+  chmod 700 "${AUTH_DIR}"
+  echo "права на ${AUTH_DIR}: $(stat -c '%a' "${AUTH_DIR}")"
+fi
+
 # Показать результат: если что-то опять не так, это будет видно в логе деплоя
 echo "содержимое ${OPENCLAW_DIR}:"
 ls -la "${OPENCLAW_DIR}" | sed 's/^/  /'
