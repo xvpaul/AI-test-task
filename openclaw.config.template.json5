@@ -26,6 +26,20 @@
     dmScope: "per-channel-peer",
   },
 
+  // Ограничение инструментов. Проверено `openclaw security audit --deep`:
+  // без этого блока агенту доступны exec/process, чтение и запись файлов,
+  // browser и control-plane (gateway, cron) — при dmPolicy "open" это означало
+  // выполнение команд на сервере по запросу любого собеседника.
+  // Ассистенту в мессенджере ничего из этого не нужно.
+  tools: {
+    profile: "messaging",
+    deny: ["group:runtime", "group:fs", "group:automation", "gateway", "cron"],
+    // Даже если что-то из файловых инструментов вернётся — не дальше workspace.
+    // Иначе в досягаемости оказывается ~/.openclaw с ключом и токеном бота.
+    fs: { workspaceOnly: true },
+    elevated: { enabled: false },
+  },
+
   models: {
     providers: {
       // Google AI Studio через OpenAI-совместимый эндпоинт.

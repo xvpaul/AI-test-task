@@ -25,6 +25,16 @@ OPENCLAW_DIR="${OPENCLAW_DIR/#\~/$HOME}"
 SERVICE="openclaw-gateway"
 cd "${COMPOSE_DIR}"
 
+# --- Override для compose ----------------------------------------------------
+# Кладётся рядом с апстримным docker-compose.yml; compose подхватывает его
+# автоматически. Через override, а не правкой docker-compose.yml, потому что
+# bootstrap делает git pull и любые локальные правки в нём затрутся.
+if [ -f /tmp/openclaw-compose-override.yml ]; then
+  install -m 644 /tmp/openclaw-compose-override.yml "${COMPOSE_DIR}/docker-compose.override.yml"
+  rm -f /tmp/openclaw-compose-override.yml
+  echo "override для compose установлен"
+fi
+
 # --- Владелец каталога конфига ---------------------------------------------
 # UID/GID спрашиваем у самого образа, а не хардкодим 1000: если сборка
 # сменит пользователя, хардкод сломается молча.
@@ -46,6 +56,12 @@ fi
 echo "выставляю владельца ${IDS} на весь каталог"
 chown -R "${IDS}" "${OPENCLAW_DIR}"
 
+# Владельца мало — нужны ещё и права. scp создаёт файлы по umask, и конфиг
+# приезжал с mode=644: читаемый всеми на машине, при том что внутри лежат
+# ключ провайдера и токен бота. Аудит ловил это как fs.config.perms_world_readable
+# и fs.state_dir.perms_readable.
+chmod 700 "${OPENCLAW_DIR}"
+
 # Показать результат: если что-то опять не так, это будет видно в логе деплоя
 echo "содержимое ${OPENCLAW_DIR}:"
 ls -la "${OPENCLAW_DIR}" | sed 's/^/  /'
@@ -66,7 +82,8 @@ if [ ! -f "${CONFIG}" ]; then
   ls -la "${OPENCLAW_DIR}" >&2
   exit 1
 fi
-echo "конфиг на месте: ${CONFIG} ($(wc -l < "${CONFIG}") строк)"
+chmod 600 "${CONFIG}"
+echo "конфиг на месте: ${CONFIG} ($(wc -l < "${CONFIG}") строк, права $(stat -c '%a' "${CONFIG}"))"
 
 # Остаток от прежних деплоев под неправильным именем — только путает
 rm -f "${OPENCLAW_DIR}/openclaw.config.json5"

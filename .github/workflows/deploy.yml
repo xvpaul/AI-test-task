@@ -11,6 +11,7 @@ on:
       # этой строки правка в них не запускала деплой — фикс оставался в репозитории
       # и молча не доезжал до сервера.
       - "scripts/**"
+      - "docker-compose.override.yml"
   workflow_dispatch: # позволяет запустить деплой вручную из вкладки Actions
 
 concurrency:
@@ -199,6 +200,12 @@ jobs:
           scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
             scripts/deploy-remote.sh \
             "${VPS_USER}@${VPS_HOST}:/tmp/openclaw-deploy.sh"
+
+          # Override для compose кладём во временный файл: путь до COMPOSE_DIR
+          # вычисляется уже на сервере, поэтому раскладывает его deploy-скрипт.
+          scp -P "${VPS_PORT}" -i ~/.ssh/deploy_key \
+            docker-compose.override.yml \
+            "${VPS_USER}@${VPS_HOST}:/tmp/openclaw-compose-override.yml"
 
           ssh -n -p "${VPS_PORT}" -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
             "COMPOSE_DIR='${COMPOSE_DIR}' OPENCLAW_DIR='${OPENCLAW_DIR}' \

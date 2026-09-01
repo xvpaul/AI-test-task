@@ -1,0 +1,24 @@
+# Переопределение healthcheck под слабую машину.
+#
+# Апстримный образ задаёт timeout 5s, а проба — не HTTP-запрос, а запуск
+# отдельного процесса node (`node dist/docker-healthcheck.js`). На 2 vCPU
+# и ~1 ГБ свободной памяти один только холодный старт node не укладывается
+# в этот бюджет: каждая проба возвращала ExitCode -1 с "Health check exceeded
+# timeout (5s)", и контейнер висел unhealthy при полностью работающем шлюзе —
+# в логах [gateway] ready, Telegram-канал поднят, бот отвечает.
+#
+# Поднимаем таймаут и стартовый период, остальное оставляем как в образе.
+# Проба переписана целиком, а не частично: при частичном переопределении
+# неуказанные поля ведут себя неочевидно, а `test` должен остаться прежним.
+#
+# Файл кладётся в каталог с апстримным docker-compose.yml. Правже самого
+# docker-compose.yml не годится: bootstrap делает `git pull` и затрёт её.
+
+services:
+  openclaw-gateway:
+    healthcheck:
+      test: ["CMD", "node", "dist/docker-healthcheck.js"]
+      interval: 30s
+      timeout: 20s
+      start_period: 60s
+      retries: 5
