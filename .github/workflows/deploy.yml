@@ -62,16 +62,41 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
           # Не секрет — переключается через переменную репозитория.
-          # allowlist (по умолчанию) → только владелец; pairing → на время проверки HR.
+          # allowlist (по умолчанию) → только владелец; open → отвечает всем.
           TELEGRAM_DM_POLICY: ${{ vars.TELEGRAM_DM_POLICY || 'allowlist' }}
         run: |
           set -euo pipefail
+
+          # allowFrom зависит от режима, поэтому собирается здесь, а не в шаблоне.
+          # Значение подставляется вместе с кавычками — в шаблоне голые скобки.
+          case "${TELEGRAM_DM_POLICY}" in
+            open)
+              # Ровно "*": без звёздочки в списке режим open не валиден.
+              # Соседство "*" с конкретным ID не проверялось — не смешиваем.
+              TELEGRAM_ALLOW_FROM='"*"'
+              ;;
+            allowlist|pairing)
+              TELEGRAM_ALLOW_FROM="\"${TELEGRAM_OWNER_ID}\""
+              ;;
+            disabled)
+              TELEGRAM_ALLOW_FROM=""
+              ;;
+            *)
+              # Опечатка в переменной репозитория иначе уехала бы на сервер
+              # и превратилась в молчащего бота без единой ошибки в логах.
+              echo "::error::TELEGRAM_DM_POLICY имеет недопустимое значение"
+              exit 1
+              ;;
+          esac
+          export TELEGRAM_ALLOW_FROM
+          echo "режим личных сообщений: ${TELEGRAM_DM_POLICY}"
+
           # Имя файла обязано быть openclaw.json — шлюз читает
           # ~/.openclaw/openclaw.json и ничего другого. Содержимое при этом
           # в формате JSON5 (комментарии и висячие запятые допустимы).
           # Файл с любым другим именем молча игнорируется, а шлюз стартует
           # на дефолтах — без gateway.mode, провайдера и Telegram.
-          envsubst '${GEMINI_API_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_OWNER_ID} ${TELEGRAM_DM_POLICY}' \
+          envsubst '${GEMINI_API_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_DM_POLICY} ${TELEGRAM_ALLOW_FROM}' \
             < openclaw.config.template.json5 > openclaw.json
 
           # Убедиться, что не осталось неподставленных плейсхолдеров
