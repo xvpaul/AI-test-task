@@ -115,7 +115,7 @@ jobs:
           # и конфиг без секции tools принимается молча, без предупреждения.
           # Поэтому проверяем явно: потерять этот блок при правке шаблона
           # или откате коммита слишком легко, а заметить потерю нечем.
-          for required in '"group:runtime"' '"group:fs"'; do
+          for required in '"group:runtime"' '"group:fs"' '"browser"'; do
             grep -q -- "$required" openclaw.json || {
               echo "::error::в отрендеренном конфиге нет запрета $required"
               exit 1
