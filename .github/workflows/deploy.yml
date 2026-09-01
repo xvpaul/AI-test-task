@@ -7,6 +7,10 @@ on:
       - "openclaw.config.template.json5"
       - "SOUL.md"
       - ".github/workflows/deploy.yml"
+      # Скрипты доставляются на сервер через scp на каждом деплое, но без
+      # этой строки правка в них не запускала деплой — фикс оставался в репозитории
+      # и молча не доезжал до сервера.
+      - "scripts/**"
   workflow_dispatch: # позволяет запустить деплой вручную из вкладки Actions
 
 concurrency:
